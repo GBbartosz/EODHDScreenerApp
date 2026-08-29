@@ -1,0 +1,287 @@
+/* App chrome. Colours mirror screenerapp/theme.py so the page and the charts
+   agree; change them in both places. */
+
+:root {
+  --surface-1: #fcfcfb;
+  --surface-2: #f3f2ef;
+  --page-plane: #f9f9f7;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --muted: #898781;
+  --gridline: #e1e0d9;
+  --baseline: #c3c2b7;
+  --accent: #2a78d6;
+  --border: rgba(11, 11, 11, 0.1);
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+}
+
+body {
+  margin: 0;
+  background: var(--page-plane);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+}
+
+/* --- navigation --- */
+
+.nav-bar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 24px;
+  height: 52px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-brand {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.nav-links {
+  display: flex;
+  gap: 4px;
+}
+
+.nav-link {
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.nav-link:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.nav-link--active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* --- page --- */
+
+.page {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* Pages built around a wide table use the full window rather than the
+   reading-width column. */
+.page--wide {
+  max-width: none;
+}
+
+.page-title {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.page-subtitle {
+  margin: 0 0 20px;
+  color: var(--text-secondary);
+}
+
+.summary {
+  margin: 12px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* --- filters: one row above everything they scope --- */
+
+.filter-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 16px;
+  margin-bottom: 16px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.field {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.field--wide {
+  flex: 2 1 360px;
+}
+
+.field--narrow {
+  flex: 0 0 auto;
+  min-width: 170px;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.checklist label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+/* A secondary control row that belongs to the panel above it. */
+.filter-panel--nested {
+  margin-top: -8px;
+  background: var(--surface-2);
+}
+
+.number-input {
+  width: 100%;
+  min-width: 90px;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.number-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Per-year growth boxes: as many as the explicit-year count asks for. */
+.stage-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  flex: 1 1 auto;
+}
+
+.stage-inputs .field {
+  flex: 0 0 auto;
+  min-width: 104px;
+}
+
+.stage-empty {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* --- stat tiles: a single number is its own chart --- */
+
+.section-title {
+  margin: 28px 0 10px;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin: 4px 0 8px;
+}
+
+.stat {
+  padding: 16px 18px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+/* Proportional figures: tabular digits make a large number look loose. */
+.stat-value {
+  margin-top: 6px;
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.stat-value--good {
+  color: #0ca30c;
+}
+
+.stat-value--bad {
+  color: #d03b3b;
+}
+
+.stat-note {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* --- home cards --- */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.card {
+  display: block;
+  padding: 20px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.card:hover {
+  border-color: var(--accent);
+}
+
+.card-title {
+  margin: 0 0 6px;
+  font-size: 16px;
+  color: var(--accent);
+}
+
+.card-text {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* --- table --- */
+
+.dash-table-container {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+}
+
+/* Axis ticks and table figures align vertically, so they get equal-width digits. */
+.dash-cell div,
+.dash-header div {
+  font-variant-numeric: tabular-nums;
+}
