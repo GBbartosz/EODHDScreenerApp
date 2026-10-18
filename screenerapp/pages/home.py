@@ -39,7 +39,8 @@ def layout():
         meta = data.get_meta()
         summary = (
             f"{meta['n_active']:,} active of {meta['n_tickers']:,} tickers · "
-            f"prices through {meta['price_date_max']}"
+            f"prices through {meta['price_date_max']} · "
+            f"fundamentals downloaded {meta['fund_snapshot']}"
         )
     except data.DataNotPreparedError as exc:
         summary = str(exc)

@@ -54,7 +54,8 @@ def preflight() -> None:
     print(
         f"Data built {meta['built_at']} · "
         f"{meta['n_active']:,} active of {meta['n_tickers']:,} tickers · "
-        f"prices through {meta['price_date_max']}"
+        f"prices through {meta['price_date_max']} · "
+        f"fundamentals downloaded {meta['fund_snapshot']}"
     )
 
 

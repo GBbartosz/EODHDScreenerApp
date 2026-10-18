@@ -29,10 +29,23 @@ MONEY_BASES = (
     "totalCashFromFinancingActivities",
     "totalCashFromOperatingActivities",
     "freeCashFlow",
+    "interestExpense",
+    "incomeTaxExpense",
+    "incomeBeforeTax",
+    "dividendsPaid",
     "commonStockSharesOutstanding",
     "netDebt",
+    "netDebt_2",
+    "cash",
     "cashAndShortTermInvestments",
     "totalDebt",
+    "shortLongTermDebtTotal",
+    "totalAssets",
+    "totalLiab",
+    "totalStockholderEquity",
+    "netInvestedCapital",
+    "investedCapital",
+    "NOPAT",
 )
 
 # Exact column names that hold a money amount - the base itself and its TTM
@@ -44,7 +57,29 @@ MONEY_COLUMNS = frozenset(
 )
 
 COUNTER_MARKERS = ("_consec_growth", "_sign_state")
-RATE_MARKERS = ("Margin", "_chg", "_CAGR", "_delta", "_pct")
+COUNTER_COLUMNS = frozenset({"gspc_bull", "gspc_bull_sofar", "gspc_bull_realized"})
+RATE_MARKERS = ("Margin", "_chg", "_CAGR", "_delta", "_pct", "_yield", "_bottom")
+RATE_COLUMNS = frozenset({"ROA", "ROE", "ROIC"})
+
+BALANCE_SHEET = frozenset(
+    {
+        "commonStockSharesOutstanding",
+        "netDebt",
+        "netDebt_2",
+        "cash",
+        "cashAndShortTermInvestments",
+        "totalDebt",
+        "shortLongTermDebtTotal",
+        "totalAssets",
+        "totalLiab",
+        "totalStockholderEquity",
+        "netInvestedCapital",
+        "investedCapital",
+    }
+)
+RETURNS_AND_LEVERAGE = frozenset(
+    {"ROA", "ROE", "ROIC", "netDebt_to_TTM_ebitda", "totalDebt_to_equity", "interest_coverage"}
+)
 
 FMT_MONEY = "money"
 FMT_PERCENT = "percent"
@@ -69,11 +104,11 @@ class Indicator:
 
 
 def _fmt_for(column: str) -> str:
-    if any(marker in column for marker in COUNTER_MARKERS) or column == "gspc_bull":
+    if any(marker in column for marker in COUNTER_MARKERS) or column in COUNTER_COLUMNS:
         return FMT_INT
     if column in MONEY_COLUMNS:
         return FMT_MONEY
-    if any(marker in column for marker in RATE_MARKERS):
+    if any(marker in column for marker in RATE_MARKERS) or column in RATE_COLUMNS:
         return FMT_PERCENT
     return FMT_RATIO
 
@@ -85,11 +120,13 @@ def _fundamental_category(column: str) -> str:
         return "Growth (CAGR)"
     if any(m in column for m in ("_chg_", "_delta_", "_consec_growth", "_sign_state")):
         return "Growth & Change"
-    if column.startswith("TTM_"):
+    if column.startswith("TTM_") or column == "NOPAT":
         return "TTM Levels"
 
     base = column
-    if base in ("commonStockSharesOutstanding", "netDebt", "cashAndShortTermInvestments", "totalDebt"):
+    if base in RETURNS_AND_LEVERAGE:
+        return "Returns & Leverage"
+    if base in BALANCE_SHEET:
         return "Balance Sheet"
     if base in (
         "capitalExpenditures",
@@ -97,6 +134,7 @@ def _fundamental_category(column: str) -> str:
         "totalCashFromFinancingActivities",
         "totalCashFromOperatingActivities",
         "freeCashFlow",
+        "dividendsPaid",
     ):
         return "Cash Flow"
     if base in (
@@ -107,6 +145,9 @@ def _fundamental_category(column: str) -> str:
         "ebit",
         "netIncome",
         "researchDevelopment",
+        "interestExpense",
+        "incomeTaxExpense",
+        "incomeBeforeTax",
     ):
         return "Income Statement"
     return "Other Fundamentals"
@@ -121,7 +162,7 @@ def _price_category(column: str) -> str:
         return "Price"
     if column.startswith(("PSG_", "PEG_", "PFCFG_", "EVrevenueG", "EVebitdaG", "EVebitG")):
         return "Growth-Adjusted Valuation"
-    if column in ("PS", "PE", "PFCF", "PRR"):
+    if column in ("PS", "PE", "PFCF", "PRR", "dividend_yield"):
         return "Valuation"
     if column in ("MarketCap", "EnterpriseValue"):
         return "Size"
@@ -140,6 +181,7 @@ CATEGORY_ORDER = (
     "Income Statement",
     "TTM Levels",
     "Margins",
+    "Returns & Leverage",
     "Growth & Change",
     "Growth (CAGR)",
     "Cash Flow",

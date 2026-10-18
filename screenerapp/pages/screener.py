@@ -2,8 +2,11 @@
 
 Every value on this page comes from ``screener_latest.parquet``: the newest
 price row for each ticker, with the fundamental quarter that was current at that
-date joined on. That is why a row carries two dates - `date` is the trading day,
-`fundamental date` is the quarter end behind the fundamental columns.
+date joined on. That is why a row carries several dates - `date` is the trading
+day, `fundamental date` is the quarter end behind the fundamental columns, and
+`valuation date` is the day the price-to-fundamentals ratios (P/E, EV/EBITDA, ...)
+are taken from. Once a newer quarter is due than the data holds, those ratios
+stop being trustworthy, so they are shown as of the last day they still were.
 """
 
 from __future__ import annotations
@@ -103,8 +106,8 @@ def _update_table(sectors, industries, tickers, active, selected):
 
     # Dates render as plain YYYY-MM-DD and still sort chronologically.
     display = frame.loc[:, [c for c in visible if c in frame.columns]].copy()
-    for column in ("date", "fundamental_date"):
-        if column in display.columns:
+    for column in config.LEADING_COLUMNS:
+        if column != "ticker" and column in display.columns:
             display[column] = display[column].dt.strftime("%Y-%m-%d")
 
     table = dash_table.DataTable(

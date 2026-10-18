@@ -2,12 +2,13 @@
 
 Two different shapes of data, loaded two different ways:
 
-* Small, always-needed tables (the screener snapshot, the sector map) are built
-  by ``prepare_data.py`` and held in memory.
-* Long history is read straight from the raw parquet files, one ticker and a
-  handful of columns at a time. The raw price file is 1.2 GB and sorted by
-  ticker, so parquet skips the row groups it doesn't need - a single ticker
-  costs ~0.03s, and results are cached per ticker after that.
+* Small, always-needed tables (the screener snapshot, the sector map, the
+  session calendar) are built by ``prepare_data.py`` and held in memory.
+* Long history is read straight from the feature files that
+  ``building_features.py`` writes, one ticker and a handful of columns at a
+  time. The price feature file is ~0.7 GB and sorted by ticker, with whole
+  tickers per row group, so parquet skips the groups it doesn't need - a single
+  ticker costs a few hundredths of a second, and is cached after that.
 
 Everything returned by a cached function is shared, so treat it as read-only:
 filter or copy before mutating.
@@ -108,8 +109,8 @@ def filter_universe(
 
 @functools.lru_cache(maxsize=1024)
 def _read_ticker_history(source: str, ticker: str, columns: tuple[str, ...]) -> pd.DataFrame:
-    """Read one ticker's history for a few columns, straight from the raw file."""
-    path = config.RAW_PRICES if source == indicators.SOURCE_PRICE else config.RAW_FUNDAMENTALS
+    """Read one ticker's history for a few columns, straight from the feature file."""
+    path = config.PRICE_FEATURES if source == indicators.SOURCE_PRICE else config.FUNDAMENTAL_FEATURES
     table = pq.read_table(
         _require(path),
         columns=["date", *columns],
@@ -165,8 +166,12 @@ def get_month_grid() -> pd.DatetimeIndex:
 
 @functools.lru_cache(maxsize=1)
 def get_trading_dates() -> pd.DatetimeIndex:
-    """Every date that appears in the price file, ascending."""
-    dates = pq.read_table(_require(config.RAW_PRICES), columns=["date"]).to_pandas()["date"]
+    """Every US session in the price file, ascending.
+
+    Stocks listed abroad trade on US holidays too; those dates are left out so a
+    picked holiday snaps back to the previous US session (see prepare_data.py).
+    """
+    dates = pd.read_parquet(_require(config.TRADING_DATES_FILE))["date"]
     return pd.DatetimeIndex(np.sort(dates.unique()))
 
 
@@ -191,7 +196,7 @@ def snap_to_trading_date(value, *, latest_if_missing: bool = True) -> pd.Timesta
 def _price_cross_section(dates: tuple[str, ...], columns: tuple[str, ...]) -> pd.DataFrame:
     stamps = [pd.Timestamp(d) for d in dates]
     table = pq.read_table(
-        _require(config.RAW_PRICES),
+        _require(config.PRICE_FEATURES),
         columns=["date", "ticker", *columns],
         filters=[("date", "in", stamps)],
     )
@@ -203,12 +208,13 @@ def _fundamental_cross_section(date_iso: str, columns: tuple[str, ...]) -> pd.Da
     """Each ticker's most recent quarter as of `date_iso`.
 
     Fundamentals are quarterly, so "the value on 12 March" means the last
-    quarter that had been reported by then.
+    quarter that had been reported by then - by its publication date, not its
+    period end, which comes weeks earlier.
     """
     table = pq.read_table(
-        _require(config.RAW_FUNDAMENTALS),
+        _require(config.FUNDAMENTAL_FEATURES),
         columns=["date", "ticker", *columns],
-        filters=[("date", "<=", pd.Timestamp(date_iso))],
+        filters=[("available_date", "<=", pd.Timestamp(date_iso))],
     )
     frame = table.to_pandas().sort_values("date")
     return frame.groupby("ticker", as_index=False).tail(1)
@@ -256,7 +262,7 @@ def get_price_extremes(start, end) -> pd.DataFrame:
     """
     start_stamp, end_stamp = pd.Timestamp(start), pd.Timestamp(end)
     table = pq.read_table(
-        _require(config.RAW_PRICES),
+        _require(config.PRICE_FEATURES),
         columns=["date", "ticker", "close", "MarketCap"],
         filters=[("date", ">=", start_stamp), ("date", "<=", end_stamp)],
     )
