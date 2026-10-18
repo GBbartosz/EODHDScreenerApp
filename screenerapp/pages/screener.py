@@ -1,8 +1,8 @@
 """Screener - one row per ticker, showing the most recent data available.
 
-Every value on this page comes from ``screener_latest.parquet``: the newest
+Every value on this page comes from the snapshot (``cache.py``): the newest
 price row for each ticker, with the fundamental quarter that was current at that
-date joined on. That is why a row carries several dates - `date` is the trading
+date joined on, amounts in USD. That is why a row carries several dates - `date` is the trading
 day, `fundamental date` is the quarter end behind the fundamental columns, and
 `valuation date` is the day the price-to-fundamentals ratios (P/E, EV/EBITDA, ...)
 are taken from. Once a newer quarter is due than the data holds, those ratios

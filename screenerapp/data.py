@@ -1,71 +1,97 @@
-"""Data access layer.
+"""Data access layer, on top of the `features` package.
 
-Two different shapes of data, loaded two different ways:
+Two shapes of data, loaded two ways:
 
-* Small, always-needed tables (the screener snapshot, the sector map, the
-  session calendar) are built by ``prepare_data.py`` and held in memory.
-* Long history is read straight from the feature files that
-  ``building_features.py`` writes, one ticker and a handful of columns at a
-  time. The price feature file is ~0.7 GB and sorted by ticker, with whole
-  tickers per row group, so parquet skips the groups it doesn't need - a single
-  ticker costs a few hundredths of a second, and is cached after that.
+* Small, always-needed tables - the screener snapshot and the session calendar
+  (built by ``cache.py`` once per features build), the ticker universe and the
+  catalog - are held in memory.
+* Long history and cross-sections are read from the package on demand, a few
+  columns at a time, and cached: one ticker's history costs a few hundredths of
+  a second, every ticker on one date about a tenth.
+
+Price columns come through the package's screener view, so they carry the app's
+rules (P/E NaN for a loss, valuation ratios blank when stale). Fundamental
+columns are quarterly rows (see indicators.py for the leverage and return ratios).
 
 Everything returned by a cached function is shared, so treat it as read-only:
-filter or copy before mutating.
+filter or copy before mutating. The caches live as long as the process: restart
+the app after a new features build.
 """
 
 from __future__ import annotations
 
 import functools
-import json
 
 import numpy as np
 import pandas as pd
-import pyarrow.parquet as pq
+
+import features
+from features.treatments import fill_category
+from features.views import screener
 
 from . import config, indicators
 
-
-class DataNotPreparedError(RuntimeError):
-    """Raised when the build step has not been run yet."""
-
-
-def _require(path):
-    if not path.exists():
-        raise DataNotPreparedError(
-            f"Missing {path.name}. Run the build step first:\n"
-            f"    .venv\\Scripts\\python.exe prepare_data.py"
-        )
-    return path
+UNIVERSE_COLUMNS = ["name", "exchange", "currency", config.SECTOR_COL, config.INDUSTRY_COL,
+                    "first_price_date", "last_price_date", "has_fundamentals"]
 
 
 @functools.lru_cache(maxsize=1)
 def get_meta() -> dict:
-    with open(_require(config.META_FILE), encoding="utf-8") as fh:
-        return json.load(fh)
+    """The package's manifest, plus the app's own active-ticker counts."""
+    meta = dict(features.get_manifest())
+    cutoff = pd.Timestamp(meta["price_date_max"]) - pd.Timedelta(days=config.ACTIVE_WINDOW_DAYS)
+    meta["active_cutoff"] = str(cutoff.date())
+    meta["n_active"] = int(get_stocks()["is_active"].sum())
+    return meta
 
 
 @functools.lru_cache(maxsize=1)
 def get_stocks() -> pd.DataFrame:
-    """One row per ticker: sector, industry, and whether it still trades."""
-    return pd.read_parquet(_require(config.STOCKS_FILE))
+    """One row per ticker: sector, industry, currency, and whether it still trades."""
+    stocks = features.read_table("universe", UNIVERSE_COLUMNS)
+    for column in (config.SECTOR_COL, config.INDUSTRY_COL):
+        stocks[column] = fill_category(stocks[column])
+    newest = pd.Timestamp(features.get_manifest()["price_date_max"])
+    stocks["is_active"] = stocks["last_price_date"] >= newest - pd.Timedelta(days=config.ACTIVE_WINDOW_DAYS)
+    return stocks.sort_values("ticker", ignore_index=True)
+
+
+@functools.lru_cache(maxsize=1)
+def get_snapshot() -> pd.DataFrame:
+    """Latest row per ticker in the trading currency (see cache.py)."""
+    return pd.read_parquet(config.SNAPSHOT_FILE)
 
 
 @functools.lru_cache(maxsize=1)
 def get_screener() -> pd.DataFrame:
-    """Latest available row per ticker, price and fundamentals joined."""
-    return pd.read_parquet(_require(config.SCREENER_FILE))
+    """The snapshot with amounts in USD, so tickers rank against each other."""
+    return to_usd(get_snapshot())
 
 
 @functools.lru_cache(maxsize=1)
 def get_catalog() -> dict[str, indicators.Indicator]:
-    meta = get_meta()
-    return indicators.build_catalog(meta["fundamental_columns"], meta["price_columns"])
+    return indicators.build_catalog()
 
 
 @functools.lru_cache(maxsize=1)
-def get_indicator_options() -> list[dict[str, str]]:
+def get_indicator_options() -> list[dict]:
     return indicators.dropdown_options(get_catalog())
+
+
+def to_usd(frame: pd.DataFrame) -> pd.DataFrame:
+    """Amounts in the trading currency divided by the day's `fx_per_usd`.
+
+    Fundamentals are in the currency the ticker trades in; MarketCap and
+    EnterpriseValue are already USD. Ratios and per-share values are left alone.
+    """
+    catalog = get_catalog()
+    local = [c for c in frame.columns if c in catalog and catalog[c].unit == "money_mn_local"]
+    return frame.assign(**{c: frame[c] / frame["fx_per_usd"] for c in local})
+
+
+def source_of(column: str) -> str:
+    indicator = get_catalog().get(column)
+    return indicator.source if indicator else indicators.SOURCE_PRICE
 
 
 # --- filter helpers --------------------------------------------------------
@@ -73,8 +99,7 @@ def get_indicator_options() -> list[dict[str, str]]:
 
 @functools.lru_cache(maxsize=1)
 def get_sector_options() -> list[dict[str, str]]:
-    stocks = get_stocks()
-    values = sorted(stocks[config.SECTOR_COL].dropna().unique())
+    values = sorted(get_stocks()[config.SECTOR_COL].unique())
     return [{"label": v, "value": v} for v in values]
 
 
@@ -107,18 +132,20 @@ def filter_universe(
 # --- long history ----------------------------------------------------------
 
 
+def _quarterly(columns, tickers=None) -> pd.DataFrame:
+    """Quarterly rows (ticker, date = period end, <columns>), app rules applied."""
+    frame = features.read_table("fundamentals_quarterly", indicators.quarterly_inputs(columns), tickers=tickers)
+    return indicators.apply_quarterly_rules(frame, columns)[["ticker", "date", *columns]]
+
+
 @functools.lru_cache(maxsize=1024)
 def _read_ticker_history(source: str, ticker: str, columns: tuple[str, ...]) -> pd.DataFrame:
-    """Read one ticker's history for a few columns, straight from the feature file."""
-    path = config.PRICE_FEATURES if source == indicators.SOURCE_PRICE else config.FUNDAMENTAL_FEATURES
-    table = pq.read_table(
-        _require(path),
-        columns=["date", *columns],
-        filters=[("ticker", "==", ticker)],
-    )
-    frame = table.to_pandas()
-    frame.insert(0, "ticker", ticker)
-    return frame.sort_values("date", ignore_index=True)
+    if source == indicators.SOURCE_PRICE:
+        return screener.load(list(columns), tickers=[ticker])
+    stocks = get_stocks()
+    if not stocks.loc[stocks["ticker"] == ticker, "has_fundamentals"].any():
+        return pd.DataFrame(columns=["ticker", "date", *columns])
+    return _quarterly(columns, tickers=[ticker])
 
 
 def get_history(
@@ -128,6 +155,7 @@ def get_history(
 ) -> pd.DataFrame:
     """Long-format history (ticker, date, <columns>) for the given tickers.
 
+    `source` price gives one row per trading day, fundamental one per quarter.
     Caching is per ticker rather than per selection, so adding one ticker to an
     existing chart only costs one new read.
     """
@@ -139,16 +167,11 @@ def get_history(
     return pd.concat(frames, ignore_index=True)
 
 
-def source_of(column: str) -> str:
-    indicator = get_catalog().get(column)
-    return indicator.source if indicator else indicators.SOURCE_PRICE
-
-
 # --- cross sections --------------------------------------------------------
 # The pages above ask for a few tickers across all dates. The heatmap and the
-# distribution page ask the opposite question - every ticker on one date - which
-# the ticker-sorted file cannot prune for. Reading a handful of columns is still
-# only a few tenths of a second, and each answer is cached.
+# distribution page ask the opposite question - every ticker on one date. The
+# package's price table is sorted by ticker, so a date cannot prune it; reading a
+# handful of columns is still about a tenth of a second, and each answer is cached.
 
 
 @functools.lru_cache(maxsize=1)
@@ -166,12 +189,8 @@ def get_month_grid() -> pd.DatetimeIndex:
 
 @functools.lru_cache(maxsize=1)
 def get_trading_dates() -> pd.DatetimeIndex:
-    """Every US session in the price file, ascending.
-
-    Stocks listed abroad trade on US holidays too; those dates are left out so a
-    picked holiday snaps back to the previous US session (see prepare_data.py).
-    """
-    dates = pd.read_parquet(_require(config.TRADING_DATES_FILE))["date"]
+    """Every US session, ascending (see cache.trading_dates)."""
+    dates = pd.read_parquet(config.TRADING_DATES_FILE)["date"]
     return pd.DatetimeIndex(np.sort(dates.unique()))
 
 
@@ -193,60 +212,39 @@ def snap_to_trading_date(value, *, latest_if_missing: bool = True) -> pd.Timesta
 
 
 @functools.lru_cache(maxsize=64)
-def _price_cross_section(dates: tuple[str, ...], columns: tuple[str, ...]) -> pd.DataFrame:
-    stamps = [pd.Timestamp(d) for d in dates]
-    table = pq.read_table(
-        _require(config.PRICE_FEATURES),
-        columns=["date", "ticker", *columns],
-        filters=[("date", "in", stamps)],
-    )
-    return table.to_pandas()
+def _price_cross_section(date_iso: str, columns: tuple[str, ...]) -> pd.DataFrame:
+    return screener.load([*columns, "fx_per_usd"], start=date_iso, end=date_iso).drop(columns="date")
 
 
 @functools.lru_cache(maxsize=64)
 def _fundamental_cross_section(date_iso: str, columns: tuple[str, ...]) -> pd.DataFrame:
-    """Each ticker's most recent quarter as of `date_iso`.
+    """The quarter in force on `date_iso` for every ticker priced that day.
 
-    Fundamentals are quarterly, so "the value on 12 March" means the last
-    quarter that had been reported by then - by its publication date, not its
-    period end, which comes weeks earlier.
+    The package's point-in-time join decides which quarter that is: the newest one
+    whose numbers were public by then (its release, not its period end).
     """
-    table = pq.read_table(
-        _require(config.FUNDAMENTAL_FEATURES),
-        columns=["date", "ticker", *columns],
-        filters=[("available_date", "<=", pd.Timestamp(date_iso))],
-    )
-    frame = table.to_pandas().sort_values("date")
-    return frame.groupby("ticker", as_index=False).tail(1)
+    refs = [indicators.QUARTERLY + c for c in indicators.quarterly_inputs(columns)]
+    frame = features.read_table("price_daily", refs, start=date_iso, end=date_iso)
+    return indicators.apply_quarterly_rules(frame, columns)[["ticker", *columns]]
 
 
 def get_cross_section(date, columns: list[str] | tuple[str, ...]) -> pd.DataFrame:
-    """One row per ticker with the requested indicators as of `date`.
+    """One row per ticker priced on `date`, with the requested indicators as of then.
 
-    Sector and industry come along, so callers can filter without a second join.
+    Amounts are in USD. Sector and industry come along, so callers can filter
+    without a second join.
     """
     date_iso = str(pd.Timestamp(date).date())
     catalog = get_catalog()
+    columns = tuple(dict.fromkeys(columns))  # both dropdowns may pick the same one
+    fundamental = tuple(c for c in columns if catalog[c].source == indicators.SOURCE_FUNDAMENTAL)
+    price = tuple(c for c in columns if c not in fundamental)
 
-    price_cols = tuple(c for c in columns if catalog[c].source == indicators.SOURCE_PRICE)
-    fundamental_cols = tuple(
-        c for c in columns if catalog[c].source == indicators.SOURCE_FUNDAMENTAL
-    )
-
-    frame = get_stocks()[
-        ["ticker", config.SECTOR_COL, config.INDUSTRY_COL, "is_active"]
-    ].copy()
-
-    if price_cols:
-        prices = _price_cross_section((date_iso,), price_cols).drop(columns=["date"])
-        frame = frame.merge(prices, on="ticker", how="left")
-    if fundamental_cols:
-        fundamentals = _fundamental_cross_section(date_iso, fundamental_cols).drop(
-            columns=["date"]
-        )
-        frame = frame.merge(fundamentals, on="ticker", how="left")
-
-    return frame
+    frame = _price_cross_section(date_iso, price)
+    if fundamental:
+        frame = frame.merge(_fundamental_cross_section(date_iso, fundamental), on="ticker")
+    stocks = get_stocks()[["ticker", config.SECTOR_COL, config.INDUSTRY_COL, "is_active"]]
+    return stocks.merge(to_usd(frame), on="ticker")
 
 
 @functools.lru_cache(maxsize=32)
@@ -260,29 +258,20 @@ def get_price_extremes(start, end) -> pd.DataFrame:
     "Last" is the newest session the ticker actually traded, which for a name
     that stopped part-way through is earlier than the window's end.
     """
-    start_stamp, end_stamp = pd.Timestamp(start), pd.Timestamp(end)
-    table = pq.read_table(
-        _require(config.PRICE_FEATURES),
-        columns=["date", "ticker", "close", "MarketCap"],
-        filters=[("date", ">=", start_stamp), ("date", "<=", end_stamp)],
-    )
-    frame = table.to_pandas()
-    frame = frame.dropna(subset=["close"])
+    frame = features.read_table("price_daily", ["close", "MarketCap"], start=start, end=end)
     frame = frame[frame["close"] > 0]
     if frame.empty:
         return pd.DataFrame()
 
-    closes = frame.groupby("ticker", sort=False)["close"]
+    closes = frame.groupby("ticker")["close"]
     extremes = pd.DataFrame({"high": closes.max(), "low": closes.min()}).reset_index()
 
-    # Take the newest row per ticker by date rather than by position, so this
-    # does not silently depend on the file's sort order.
     newest = frame.loc[frame.groupby("ticker")["date"].idxmax()]
     newest = newest[["ticker", "date", "close", "MarketCap"]].rename(
         columns={"date": "last_date", "close": "last"}
     )
 
-    merged = extremes.merge(newest, on="ticker", how="inner")
+    merged = extremes.merge(newest, on="ticker")
     merged = merged[merged["MarketCap"] > 0]
 
     stocks = get_stocks()[["ticker", config.SECTOR_COL, config.INDUSTRY_COL]]
@@ -294,28 +283,13 @@ def get_price_change(start, end) -> pd.DataFrame:
 
     Only tickers priced on *both* dates are returned - a change needs two ends.
     """
-    start_iso = str(pd.Timestamp(start).date())
-    end_iso = str(pd.Timestamp(end).date())
+    columns = ("close", "MarketCap")
+    first = _price_cross_section(str(pd.Timestamp(start).date()), columns)
+    last = _price_cross_section(str(pd.Timestamp(end).date()), columns)
 
-    raw = _price_cross_section(tuple(sorted({start_iso, end_iso})), ("close", "MarketCap"))
-    closes = raw.pivot(index="ticker", columns="date", values="close")
-
-    start_stamp, end_stamp = pd.Timestamp(start_iso), pd.Timestamp(end_iso)
-    if start_stamp not in closes.columns or end_stamp not in closes.columns:
-        return pd.DataFrame()
-
-    frame = pd.DataFrame(
-        {
-            "close_start": closes[start_stamp],
-            "close_end": closes[end_stamp],
-        }
-    ).dropna()
-    frame = frame[frame["close_start"] > 0]
+    frame = first[["ticker", "close"]].merge(last, on="ticker", suffixes=("_start", "_end"))
+    frame = frame[(frame["close_start"] > 0) & (frame["MarketCap"] > 0)].copy()
     frame["change_pct"] = (frame["close_end"] / frame["close_start"] - 1) * 100
 
-    caps = raw[raw["date"] == end_stamp].set_index("ticker")["MarketCap"]
-    frame["MarketCap"] = caps
-    frame = frame[frame["MarketCap"] > 0].reset_index()
-
     stocks = get_stocks()[["ticker", config.SECTOR_COL, config.INDUSTRY_COL]]
-    return frame.merge(stocks, on="ticker", how="left")
+    return frame.merge(stocks, on="ticker", how="left").reset_index(drop=True)

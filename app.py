@@ -12,11 +12,13 @@ imports. To add a page: create a module in screenerapp/pages/, call
 
 from __future__ import annotations
 
+import subprocess
 import sys
 
 from dash import Dash, html, page_container
 
-from screenerapp import data
+import features
+from screenerapp import cache, data
 
 app = Dash(
     __name__,
@@ -45,14 +47,23 @@ app.layout = html.Div([page_container], className="app-root")
 
 
 def preflight() -> None:
-    """Fail with instructions rather than a stack trace if the build step is due."""
-    try:
-        meta = data.get_meta()
-    except data.DataNotPreparedError as exc:
-        sys.exit(f"\n{exc}\n")
+    """Fail with instructions rather than a stack trace if there is no features build,
+    and rebuild the app's cache when the features build is new.
 
+    The cache is built in a child process, so its peak memory is returned to the
+    system before the server starts. With debug on, this runs twice (the reloader
+    restarts the script); the second time the cache is already fresh.
+    """
+    try:
+        fresh = cache.is_fresh()
+    except features.FeaturesError as exc:
+        sys.exit(f"\n{exc}\n")
+    if not fresh:
+        subprocess.run([sys.executable, "-m", "screenerapp.cache"], check=True)
+
+    meta = data.get_meta()
     print(
-        f"Data built {meta['built_at']} · "
+        f"Features built {meta['built_at']} · "
         f"{meta['n_active']:,} active of {meta['n_tickers']:,} tickers · "
         f"prices through {meta['price_date_max']} · "
         f"fundamentals downloaded {meta['fund_snapshot']}"

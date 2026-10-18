@@ -1,80 +1,18 @@
 """Paths and shared constants.
 
-Everything that knows *where* data lives is here, so moving or renaming a data
-drop only requires editing this file.
+The data itself comes from the `features` package, which finds its own build
+(see its README). This project only keeps the tables it derives for its pages.
 """
 
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_ROOT / "data"
-PROCESSED_DIR = DATA_DIR / "processed"
 
-# Raw drop - replaced by hand a few times a year.
-RAW_PRICES = DATA_DIR / "prices_raw.parquet"
-RAW_FUNDAMENTALS = DATA_DIR / "fundamentals_raw.parquet"
-RAW_TICKERS = DATA_DIR / "tickers.parquet"
-RAW_FX = DATA_DIR / "fx_rates.parquet"
-RAW_INDEX = DATA_DIR / "index_prices.parquet"  # optional - GSPC for the gspc_* columns
-
-# Built by building_features.py.
-FUNDAMENTAL_FEATURES = PROCESSED_DIR / "fundamental_features.parquet"
-PRICE_FEATURES = PROCESSED_DIR / "price_features.parquet"
-
-# Built by prepare_data.py.
-SCREENER_FILE = PROCESSED_DIR / "screener_latest.parquet"
-STOCKS_FILE = PROCESSED_DIR / "stocks.parquet"
-TRADING_DATES_FILE = PROCESSED_DIR / "trading_dates.parquet"
-META_FILE = PROCESSED_DIR / "meta.json"
-
-# Columns that identify a row rather than describe a company. Never offered as
-# indicators.
-KEY_COLUMNS = (
-    "ticker",
-    "date",
-    "filing_date",
-    "earnings_report_date",
-    "available_date",
-    "yq",
-    "quarter",
-    "fund_date",
-    "fund_stale",
-    "source",
-)
-
-# Price features that combine the price with fundamentals. They are blank on days
-# when the quarter behind them may already have been superseded by a newer report
-# that is not in the data (`fund_stale`) - typically some weeks after the
-# fundamentals download, while yfinance prices carry on. MarketCap is not in the
-# list: a share count drifts slowly, so it stays usable for sizing.
-VALUATION_COLUMNS = (
-    "PS",
-    "PE",
-    "PFCF",
-    "PRR",
-    "PSG_4q",
-    "PSG_20q",
-    "PSG_40q",
-    "PEG_4q",
-    "PEG_20q",
-    "PEG_40q",
-    "PFCFG_4q",
-    "PFCFG_20q",
-    "PFCFG_40q",
-    "EnterpriseValue",
-    "EVrevenue",
-    "EVebitda",
-    "EVebit",
-    "EVrevenueG_4q",
-    "EVrevenueG_20q",
-    "EVrevenueG_40q",
-    "EVebitdaG_chg_4q",
-    "EVebitdaG_CAGR_20q",
-    "EVebitdaG_CAGR_40q",
-    "EVebitG_chg_4q",
-    "EVebitG_CAGR_20q",
-    "EVebitG_CAGR_40q",
-)
+# Built by screenerapp/cache.py from the package at start-up, once per features build.
+CACHE_DIR = PROJECT_ROOT / "data" / "cache"
+SNAPSHOT_FILE = CACHE_DIR / "snapshot.parquet"
+TRADING_DATES_FILE = CACHE_DIR / "trading_dates.parquet"
+BUILD_ID_FILE = CACHE_DIR / "build_id.txt"
 
 # Columns pinned to the left of the screener table, in this order.
 LEADING_COLUMNS = ("ticker", "fundamental_date", "valuation_date", "date")

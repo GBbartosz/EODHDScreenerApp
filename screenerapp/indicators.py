@@ -1,179 +1,52 @@
-"""The indicator catalog.
+"""The indicator catalog: every column a page can offer, built from the features package.
 
-Every numeric column in the two parquet files becomes an ``Indicator``: which
-file it lives in, which group it belongs to in the dropdowns, and how it should
-be formatted. Pages read from this catalog rather than hard-coding column names,
-so a new column in a data drop shows up everywhere automatically.
+The package describes each column (unit, category, description); this module only
+decides which ones the app offers and how to show them. Two sources:
+
+* price - daily rows of the package's screener view (its PE, PFCF, ... with the app's
+  rules: NaN for a non-positive denominator, valuation ratios blank when stale).
+* fundamental - quarterly rows of `fundamentals_quarterly`. Leverage and returns on
+  capital (ROE, ROA, ...) come from the view's own definitions, applied here to the
+  quarterly rows, so they are NaN for a denominator up to 1 M whatever the frequency.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from . import config
+import features
+from features.views import screener
 
-# --- formatting ------------------------------------------------------------
-# Money columns are reported in millions; margins, changes and CAGRs are stored
-# as fractions (0.4667 means 46.67%); a handful of columns are counters or flags.
+QUARTERLY = "fundamentals_quarterly."
 
-MONEY_BASES = (
-    "totalRevenue",
-    "grossProfit",
-    "operatingIncome",
-    "ebitda",
-    "ebit",
-    "netIncome",
-    "researchDevelopment",
-    "capitalExpenditures",
-    "totalCashflowsFromInvestingActivities",
-    "totalCashFromFinancingActivities",
-    "totalCashFromOperatingActivities",
-    "freeCashFlow",
-    "interestExpense",
-    "incomeTaxExpense",
-    "incomeBeforeTax",
-    "dividendsPaid",
-    "commonStockSharesOutstanding",
-    "netDebt",
-    "netDebt_2",
-    "cash",
-    "cashAndShortTermInvestments",
-    "totalDebt",
-    "shortLongTermDebtTotal",
-    "totalAssets",
-    "totalLiab",
-    "totalStockholderEquity",
-    "netInvestedCapital",
-    "investedCapital",
-    "NOPAT",
-)
+# The view's columns computed only from quarterly inputs: shown as fundamentals.
+QUARTERLY_RULES = {
+    c.name: c for c in screener.COLUMNS if all(i.startswith(QUARTERLY) for i in c.inputs)
+}
 
-# Exact column names that hold a money amount - the base itself and its TTM
-# variant. Anything longer (a _chg_ or _CAGR_ of these) is a rate, not an amount.
-MONEY_COLUMNS = frozenset(
-    list(MONEY_BASES)
-    + [f"TTM_{base}" for base in MONEY_BASES]
-    + ["MarketCap", "EnterpriseValue"]
-)
-
-COUNTER_MARKERS = ("_consec_growth", "_sign_state")
-COUNTER_COLUMNS = frozenset({"gspc_bull", "gspc_bull_sofar", "gspc_bull_realized"})
-RATE_MARKERS = ("Margin", "_chg", "_CAGR", "_delta", "_pct", "_yield", "_bottom")
-RATE_COLUMNS = frozenset({"ROA", "ROE", "ROIC"})
-
-BALANCE_SHEET = frozenset(
-    {
-        "commonStockSharesOutstanding",
-        "netDebt",
-        "netDebt_2",
-        "cash",
-        "cashAndShortTermInvestments",
-        "totalDebt",
-        "shortLongTermDebtTotal",
-        "totalAssets",
-        "totalLiab",
-        "totalStockholderEquity",
-        "netInvestedCapital",
-        "investedCapital",
-    }
-)
-RETURNS_AND_LEVERAGE = frozenset(
-    {"ROA", "ROE", "ROIC", "netDebt_to_TTM_ebitda", "totalDebt_to_equity", "interest_coverage"}
-)
+NUMERIC_DTYPES = frozenset({"float32", "float64", "int16", "int32", "int64"})
+HIDDEN = frozenset({"fx_per_usd", "quarter"})  # numeric, but not something to screen on
 
 FMT_MONEY = "money"
 FMT_PERCENT = "percent"
 FMT_RATIO = "ratio"
 FMT_INT = "int"
+FMT_BY_UNIT = {
+    "money_mn_local": FMT_MONEY,
+    "money_mn_usd": FMT_MONEY,
+    "shares_mn": FMT_MONEY,
+    "fraction": FMT_PERCENT,
+    "count": FMT_INT,
+    "enum": FMT_INT,
+}  # anything else (ratio, price_local, points) is a plain number
 
 SOURCE_FUNDAMENTAL = "fundamental"
 SOURCE_PRICE = "price"
 
-
-@dataclass(frozen=True)
-class Indicator:
-    column: str
-    category: str
-    source: str
-    fmt: str
-
-    @property
-    def option_label(self) -> str:
-        """Label used in dropdowns - keeps the exact column name searchable."""
-        return f"{self.category} · {self.column}"
-
-
-def _fmt_for(column: str) -> str:
-    if any(marker in column for marker in COUNTER_MARKERS) or column in COUNTER_COLUMNS:
-        return FMT_INT
-    if column in MONEY_COLUMNS:
-        return FMT_MONEY
-    if any(marker in column for marker in RATE_MARKERS) or column in RATE_COLUMNS:
-        return FMT_PERCENT
-    return FMT_RATIO
-
-
-def _fundamental_category(column: str) -> str:
-    if "Margin" in column:
-        return "Margins"
-    if "_CAGR_" in column:
-        return "Growth (CAGR)"
-    if any(m in column for m in ("_chg_", "_delta_", "_consec_growth", "_sign_state")):
-        return "Growth & Change"
-    if column.startswith("TTM_") or column == "NOPAT":
-        return "TTM Levels"
-
-    base = column
-    if base in RETURNS_AND_LEVERAGE:
-        return "Returns & Leverage"
-    if base in BALANCE_SHEET:
-        return "Balance Sheet"
-    if base in (
-        "capitalExpenditures",
-        "totalCashflowsFromInvestingActivities",
-        "totalCashFromFinancingActivities",
-        "totalCashFromOperatingActivities",
-        "freeCashFlow",
-        "dividendsPaid",
-    ):
-        return "Cash Flow"
-    if base in (
-        "totalRevenue",
-        "grossProfit",
-        "operatingIncome",
-        "ebitda",
-        "ebit",
-        "netIncome",
-        "researchDevelopment",
-        "interestExpense",
-        "incomeTaxExpense",
-        "incomeBeforeTax",
-    ):
-        return "Income Statement"
-    return "Other Fundamentals"
-
-
-def _price_category(column: str) -> str:
-    if "gspc_adj" in column:
-        return "Market-Adjusted"
-    if column.startswith("gspc"):
-        return "Market (S&P 500)"
-    if column == "close" or column.startswith("close_"):
-        return "Price"
-    if column.startswith(("PSG_", "PEG_", "PFCFG_", "EVrevenueG", "EVebitdaG", "EVebitG")):
-        return "Growth-Adjusted Valuation"
-    if column in ("PS", "PE", "PFCF", "PRR", "dividend_yield"):
-        return "Valuation"
-    if column in ("MarketCap", "EnterpriseValue"):
-        return "Size"
-    if column.startswith("EV"):
-        return "Enterprise Value"
-    return "Other Price"
-
-
 # Dropdown ordering - categories a screener reaches for first come first.
 CATEGORY_ORDER = (
     "Price",
+    "Returns",
     "Valuation",
     "Size",
     "Growth-Adjusted Valuation",
@@ -186,44 +59,92 @@ CATEGORY_ORDER = (
     "Growth (CAGR)",
     "Cash Flow",
     "Balance Sheet",
-    "Market-Adjusted",
-    "Market (S&P 500)",
-    "Other Fundamentals",
-    "Other Price",
+    "Market-Relative",
+    "Other",
 )
 
 
-def build_catalog(
-    fundamental_columns: list[str], price_columns: list[str]
-) -> dict[str, Indicator]:
-    """Map every usable column to an Indicator.
+@dataclass(frozen=True)
+class Indicator:
+    column: str
+    category: str
+    source: str
+    unit: str
+    description: str
+    is_valuation: bool
 
-    Price columns win ties: the screener shows one row per ticker as of the most
-    recent trading day, so a column present in both files is taken from prices.
-    """
+    @property
+    def fmt(self) -> str:
+        return FMT_BY_UNIT.get(self.unit, FMT_RATIO)
+
+    @property
+    def option_label(self) -> str:
+        """Label used in dropdowns - keeps the exact column name searchable."""
+        return f"{self.category} · {self.column}"
+
+
+def _offered(row) -> bool:
+    """Numbers only, and not the duplicates the app shows under another name:
+    *_signed keep a negative denominator's sign (the app shows NaN there), *_local are
+    MarketCap / EV in the trading currency (the app compares in USD). Forward-looking
+    columns use the future, so they never belong in a screen."""
+    return (
+        row.dtype in NUMERIC_DTYPES
+        and not row.is_forward_looking
+        and row.column not in HIDDEN
+        and not row.column.endswith(("_signed", "_local"))
+    )
+
+
+def build_catalog() -> dict[str, Indicator]:
+    canonical = features.get_catalog()
+    dtypes = canonical.set_index(["table", "column"])["dtype"]
+    view = screener.catalog()
+    # Columns the view computes itself (PE, ROE, ...) are float ratios.
+    view["dtype"] = [
+        "float32" if src == "view" else dtypes[("price_daily", col)]
+        for col, src in zip(view["column"], view["source"])
+    ]
+
     catalog: dict[str, Indicator] = {}
-
-    for column in fundamental_columns:
-        if column in config.KEY_COLUMNS:
+    quarterly = canonical[canonical["table"] == "fundamentals_quarterly"]
+    for row in quarterly[~quarterly["is_key"]].itertuples():
+        if _offered(row):
+            catalog[row.column] = Indicator(
+                row.column, row.category, SOURCE_FUNDAMENTAL, row.unit, row.description, False
+            )
+    for row in view.itertuples():
+        if not _offered(row):
             continue
-        catalog[column] = Indicator(
-            column=column,
-            category=_fundamental_category(column),
-            source=SOURCE_FUNDAMENTAL,
-            fmt=_fmt_for(column),
+        # A quarterly rule replaces the canonical column of the same name (ROA,
+        # interest_coverage) - one name, one number.
+        source = SOURCE_FUNDAMENTAL if row.column in QUARTERLY_RULES else SOURCE_PRICE
+        catalog[row.column] = Indicator(
+            row.column, row.category, source, row.unit, row.description, bool(row.is_valuation)
         )
-
-    for column in price_columns:
-        if column in config.KEY_COLUMNS:
-            continue
-        catalog[column] = Indicator(
-            column=column,
-            category=_price_category(column),
-            source=SOURCE_PRICE,
-            fmt=_fmt_for(column),
-        )
-
     return catalog
+
+
+# --- quarterly rows --------------------------------------------------------
+
+
+def quarterly_inputs(columns) -> list[str]:
+    """Canonical `fundamentals_quarterly` columns to read for these fundamental columns."""
+    names = []
+    for column in columns:
+        rule = QUARTERLY_RULES.get(column)
+        names += [i.removeprefix(QUARTERLY) for i in rule.inputs] if rule else [column]
+    return list(dict.fromkeys(names))
+
+
+def apply_quarterly_rules(frame, columns):
+    """`frame` (canonical quarterly inputs under their bare names) with the app's
+    leverage and return ratios computed in place of the canonical ones."""
+    values = {c: QUARTERLY_RULES[c].compute(frame) for c in columns if c in QUARTERLY_RULES}
+    return frame.assign(**values)
+
+
+# --- presentation ----------------------------------------------------------
 
 
 def sort_key(indicator: Indicator) -> tuple[int, str]:
@@ -234,10 +155,11 @@ def sort_key(indicator: Indicator) -> tuple[int, str]:
     return rank, indicator.column.lower()
 
 
-def dropdown_options(catalog: dict[str, Indicator]) -> list[dict[str, str]]:
-    """Options for any indicator dropdown, grouped by category via the label."""
+def dropdown_options(catalog: dict[str, Indicator]) -> list[dict]:
+    """Options for any indicator dropdown, grouped by category via the label; the
+    package's description is the hover text."""
     return [
-        {"label": ind.option_label, "value": ind.column}
+        {"label": ind.option_label, "value": ind.column, "title": ind.description}
         for ind in sorted(catalog.values(), key=sort_key)
     ]
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 import dash
 from dash import dcc, html
 
+import features
+
 from .. import components, data
 
 BLURBS = {
@@ -42,7 +44,7 @@ def layout():
             f"prices through {meta['price_date_max']} · "
             f"fundamentals downloaded {meta['fund_snapshot']}"
         )
-    except data.DataNotPreparedError as exc:
+    except features.FeaturesError as exc:
         summary = str(exc)
 
     return html.Div(

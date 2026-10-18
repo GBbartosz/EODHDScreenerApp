@@ -15,10 +15,12 @@ A quarter distorted by a one-off - a legal settlement, a tax charge, a big
 working-capital swing - would otherwise propagate through every forecast year
 and the terminal value with it.
 
-The model bridges to equity the way the data does: the file's own
+The model bridges to equity the way the data does: the package's own
 EnterpriseValue equals MarketCap + netDebt exactly, so subtracting net debt
-from enterprise value is the consistent step. Everything from the data is in
-millions; per-share figures are in dollars.
+from enterprise value is the consistent step. Everything is in the stock's
+trading currency: amounts in millions, per-share figures per share. The price
+is the traded one (`price_split_adj`), on the same split basis as the share
+count MarketCap uses (`commonStockSharesOutstanding_carried`).
 """
 
 from __future__ import annotations
@@ -195,21 +197,31 @@ def _number_field(label: str, field_id, value, step: float, **input_kwargs) -> h
     )
 
 
+def _latest(ticker) -> pd.Series | None:
+    """The stock's snapshot row, in its trading currency (not converted to USD)."""
+    frame = data.get_snapshot()
+    row = frame[frame["ticker"] == ticker]
+    return None if row.empty else row.iloc[0]
+
+
+def _currency(ticker) -> str:
+    stocks = data.get_stocks()
+    return stocks.loc[stocks["ticker"] == ticker, "currency"].iloc[0]
+
+
 def _seed_values(ticker) -> tuple[float | None, float, float | None]:
     """Starting cash flow, growth rate and price to open with, from the stock."""
     if not ticker:
         return None, DEFAULT_GROWTH_PCT, None
 
-    frame = data.get_screener()
-    row = frame[frame["ticker"] == ticker]
-    if row.empty:
+    row = _latest(ticker)
+    if row is None:
         return None, DEFAULT_GROWTH_PCT, None
-    row = row.iloc[0]
 
     base = row["TTM_freeCashFlow"]
     base = None if pd.isna(base) else round(float(base), 1)
 
-    price = row["close"]
+    price = row["price_split_adj"]
     price = None if pd.isna(price) else round(float(price), 2)
 
     cagr = row["TTM_freeCashFlow_CAGR_20q"]
@@ -387,16 +399,15 @@ def _update_results(
     if not ticker:
         return [], "Pick a stock."
 
-    frame = data.get_screener()
-    row = frame[frame["ticker"] == ticker]
-    if row.empty:
+    row = _latest(ticker)
+    if row is None:
         return [], "No data for this stock."
-    row = row.iloc[0]
 
     reported = row["TTM_freeCashFlow"]
-    shares = row["commonStockSharesOutstanding"]
+    shares = row["commonStockSharesOutstanding_carried"]
     net_debt = 0.0 if pd.isna(row["netDebt"]) else float(row["netDebt"])
-    last_close = None if pd.isna(row["close"]) else float(row["close"])
+    last_close = None if pd.isna(row["price_split_adj"]) else float(row["price_split_adj"])
+    currency = _currency(ticker)
 
     if pd.isna(shares) or shares <= 0:
         return [], f"{ticker} has no share count, so a per-share value is not possible."
@@ -432,7 +443,7 @@ def _update_results(
     else:
         price_note = f" as of {row['date'].date()}"
     basis = (
-        f"Starting FCF {base_fcf:,.0f} M{reported_note} · net debt {net_debt:,.0f} M · "
+        f"{currency} · starting FCF {base_fcf:,.0f} M{reported_note} · net debt {net_debt:,.0f} M · "
         f"{shares:,.0f} M shares · price {price:,.2f}{price_note}"
     )
 
