@@ -16,6 +16,7 @@ BLURBS = {
     "/indicator-distribution": "See where a stock falls within the market's spread of an indicator.",
     "/inspection": "Track two indicators through time for the stocks you pick.",
     "/dcf": "Value a stock on its cash flow, and reverse-engineer what the price assumes.",
+    "/features": "What every feature means, how it is computed and where the app uses it.",
 }
 
 

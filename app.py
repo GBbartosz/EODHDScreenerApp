@@ -35,6 +35,7 @@ server = app.server
 # register_page() looks the app up on the way in.
 from screenerapp.pages import (  # noqa: E402,F401
     dcf,
+    features_docs,
     heatmap,
     home,
     indicator_distribution,

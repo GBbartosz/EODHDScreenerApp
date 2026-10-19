@@ -17,7 +17,7 @@ The input data is in the "features" package.
 The package supplies the necessary fundamental, price, valuation and universal features.
 If some of the features needs to be changed or added - tell the user to make modifications in the package.
 
-The modifications for specific pages of the app are a part of this project, not the "features" package (latest snapshot, cross-sections, heatmap ranges, trading calendar, DCF inputs)..
+The modifications for specific pages of the app are a part of this project, not the "features" package (latest snapshot, cross-sections, heatmap ranges, trading calendar, DCF inputs).
 
 
 # ADDITIONAL TASKS

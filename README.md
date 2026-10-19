@@ -23,8 +23,10 @@ installed editable into this venv:
 
 It finds its own build (`1_FeaturesBuilder/data/features/v1`). New data means a new
 `features build` in that project; then restart the app. Column definitions, units and
-missing-value rules are in `1_FeaturesBuilder/docs/features.md`. A feature that is
-wrong or missing is changed in the package, not here.
+missing-value rules are in `1_FeaturesBuilder/docs/features.md`, and in the app on the
+**Features** page (`/features`): every column with its formula, inputs, dependents and
+whether the app offers it, searchable and sortable. A feature that is wrong or missing is
+changed in the package, not here.
 
 What this project builds on top of the package is page-specific:
 
@@ -70,6 +72,7 @@ screenerapp/
   indicators.py             the indicator catalog
   theme.py                  chart palette and Plotly styling
   components.py             nav bar + the shared filter panel
+  feature_docs.py           the feature documentation table, from the package registry
   pages/
     home.py                     landing page
     screener.py                 the table
@@ -78,6 +81,7 @@ screenerapp/
     indicator_distribution.py   market histograms / density map
     inspection.py               indicators through time, two y-axes
     dcf.py                      cash-flow valuation, forward and reverse
+    features_docs.py            documentation of every feature (feature_docs.py builds it)
 assets/style.css            app styling
 data/cache/                 the start-up cache (gitignored)
 ```

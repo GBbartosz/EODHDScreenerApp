@@ -83,17 +83,28 @@ class Indicator:
         return f"{self.category} · {self.column}"
 
 
-def _offered(row) -> bool:
-    """Numbers only, and not the duplicates the app shows under another name:
+def not_offered_reason(column: str, dtype: str, is_forward_looking: bool) -> str | None:
+    """Why a column is kept out of the indicator dropdowns, or None if it is offered.
+
+    Numbers only, and not the duplicates the app shows under another name:
     *_signed keep a negative denominator's sign (the app shows NaN there), *_local are
     MarketCap / EV in the trading currency (the app compares in USD). Forward-looking
     columns use the future, so they never belong in a screen."""
-    return (
-        row.dtype in NUMERIC_DTYPES
-        and not row.is_forward_looking
-        and row.column not in HIDDEN
-        and not row.column.endswith(("_signed", "_local"))
-    )
+    if dtype not in NUMERIC_DTYPES:
+        return "not numeric"
+    if is_forward_looking:
+        return "forward-looking"
+    if column in HIDDEN:
+        return "not a screening value"
+    if column.endswith("_signed"):
+        return "signed duplicate"
+    if column.endswith("_local"):
+        return "local-currency duplicate"
+    return None
+
+
+def _offered(row) -> bool:
+    return not_offered_reason(row.column, row.dtype, row.is_forward_looking) is None
 
 
 def build_catalog() -> dict[str, Indicator]:
