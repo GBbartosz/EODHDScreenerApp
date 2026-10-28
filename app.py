@@ -15,10 +15,10 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from dash import Dash, html, page_container
+from dash import Dash, dcc, html, page_container
 
 import features
-from screenerapp import cache, data
+from screenerapp import cache, components, data
 
 app = Dash(
     __name__,
@@ -34,17 +34,24 @@ server = app.server
 # modules is what registers them. This has to happen after the app exists -
 # register_page() looks the app up on the way in.
 from screenerapp.pages import (  # noqa: E402,F401
+    configuration,
     dcf,
     features_docs,
     heatmap,
     home,
     indicator_distribution,
     inspection,
+    market,
     relative_performance,
     screener,
 )
 
-app.layout = html.Div([page_container], className="app-root")
+# The portfolio sits outside page_container, so every page can read it. Local
+# storage keeps it in the browser across sessions.
+app.layout = html.Div(
+    [dcc.Store(id=components.PORTFOLIO_STORE, storage_type="local", data=[]), page_container],
+    className="app-root",
+)
 
 
 def preflight() -> None:

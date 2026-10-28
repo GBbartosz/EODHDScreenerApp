@@ -95,7 +95,7 @@ def layout():
                         "of an indicator, and within their sector or industry.",
                         className="page-subtitle",
                     ),
-                    components.filter_panel(PAGE),
+                    components.filter_panel(PAGE, portfolio_button=True),
                     html.Div(
                         [
                             html.Div(

@@ -9,6 +9,7 @@ gets working filters just by calling ``filter_panel("its-name")``.
 from __future__ import annotations
 
 import dash
+import pandas as pd
 from dash import MATCH, Input, Output, State, callback, ctx, dcc, html
 
 from . import config, data
@@ -21,6 +22,10 @@ INACTIVE_OPTION = "include_inactive"
 # them would make the only interesting comparison - a stock against a sector it
 # does not belong to - impossible to set up.
 FULL_UNIVERSE_STOCK_PAGES = frozenset({"indicator-distribution"})
+
+# The user's portfolio (a list of tickers), set on the Configuration page and
+# kept in the browser's local storage; app.py puts the store in the root layout.
+PORTFOLIO_STORE = "portfolio-store"
 
 
 def fid(component: str, page: str) -> dict:
@@ -45,10 +50,13 @@ def nav_bar(active_path: str) -> html.Nav:
     )
 
 
-def filter_panel(page: str, *, include_active_toggle: bool = True) -> html.Div:
+def filter_panel(
+    page: str, *, include_active_toggle: bool = True, portfolio_button: bool = False
+) -> html.Div:
     """Sector / industry / stock multi-selects, plus the inactive-ticker toggle.
 
-    Nothing is selected by default, which means "no restriction".
+    Nothing is selected by default, which means "no restriction". With
+    `portfolio_button`, a button fills the stock dropdown with the portfolio.
     """
     children = [
         html.Div(
@@ -91,6 +99,24 @@ def filter_panel(page: str, *, include_active_toggle: bool = True) -> html.Div:
             className="field field--wide",
         ),
     ]
+
+    # Always present, hidden when not wanted, so the MATCH callbacks still resolve.
+    children.append(
+        html.Div(
+            [
+                html.Label("Portfolio", className="field-label"),
+                html.Button(
+                    "Portfolio",
+                    id=fid("portfolio", page),
+                    n_clicks=0,
+                    className="portfolio-btn",
+                    title="Select the stocks saved on the Configuration page",
+                ),
+            ],
+            className="field field--narrow",
+            style=None if portfolio_button else {"display": "none"},
+        )
+    )
 
     if include_active_toggle:
         children.append(
@@ -146,10 +172,17 @@ def _update_industries(sectors, active, current):
     Input(fid("sector", MATCH), "value"),
     Input(fid("industry", MATCH), "value"),
     Input(fid("active", MATCH), "value"),
+    Input(fid("portfolio", MATCH), "n_clicks"),
     State(fid("stock", MATCH), "value"),
+    State(PORTFOLIO_STORE, "data"),
 )
-def _update_stocks(sectors, industries, active, current):
-    """Limit tickers to the chosen sectors/industries, unless the page opts out."""
+def _update_stocks(sectors, industries, active, _clicks, current, portfolio):
+    """Limit tickers to the chosen sectors/industries, unless the page opts out.
+
+    The portfolio button selects the whole portfolio, even stocks outside the
+    current filters (they are added to the options); a later filter change
+    narrows the selection again as usual.
+    """
     page = ctx.outputs_list[0]["id"]["page"]
     if page in FULL_UNIVERSE_STOCK_PAGES:
         sectors, industries = None, None
@@ -157,6 +190,12 @@ def _update_stocks(sectors, industries, active, current):
     universe = data.filter_universe(
         sectors, industries, active_only=wants_active_only(active)
     )
+    if isinstance(ctx.triggered_id, dict) and ctx.triggered_id["component"] == "portfolio":
+        stocks = data.get_stocks()
+        wanted = stocks[stocks["ticker"].isin(portfolio or [])]
+        universe = pd.concat([universe, wanted]).drop_duplicates("ticker").sort_values("ticker")
+        current = list(wanted["ticker"])
+
     available = list(universe["ticker"])
     options = [
         {"label": f"{row.ticker} · {getattr(row, config.SECTOR_COL)}", "value": row.ticker}

@@ -1,13 +1,19 @@
 """Chart palette and Plotly styling.
 
-The eight categorical hues and the chrome colors below are the reference
+The first eight categorical hues and the chrome colors below are the reference
 data-viz palette, used unchanged and in its documented slot order - that
 ordering is what keeps adjacent series distinguishable under colour-vision
-deficiency, so reordering or extending the list is not a cosmetic change.
+deficiency, so reordering the list is not a cosmetic change.
 
-The palette deliberately stops at eight. Charts never cycle it: series past the
-eighth are drawn in a muted neutral as context rather than given a ninth hue
-that would be indistinguishable from an existing slot.
+Slots 9-12 extend it for portfolios of up to twelve stocks. They were searched
+with the reference validator's checks (OKLCH lightness band and chroma floor,
+3:1 contrast on the surface, OKLab Delta E): each sits at least 15 from every
+other slot under normal vision, and adjacent slots stay at least 8 apart under
+simulated protan/deutan vision. Past about twelve, no further hue clears those
+floors - the next candidates repeat a pink or a blue.
+
+Charts never cycle the palette: series past the twelfth are drawn in a muted
+neutral as context rather than given a hue that would match an existing slot.
 """
 
 from __future__ import annotations
@@ -24,6 +30,10 @@ SERIES = (
     "#008300",  # green
     "#4a3aa7",  # violet
     "#e34948",  # red
+    "#a50371",  # wine
+    "#977d30",  # olive
+    "#b235ec",  # purple
+    "#7c4111",  # brown
 )
 MAX_COLOURED_SERIES = len(SERIES)
 

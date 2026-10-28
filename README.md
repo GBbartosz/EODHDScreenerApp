@@ -28,6 +28,21 @@ missing-value rules are in `1_FeaturesBuilder/docs/features.md`, and in the app 
 whether the app offers it, searchable and sortable. A feature that is wrong or missing is
 changed in the package, not here.
 
+### Updating the data
+
+`update_data.py` runs the whole chain, each step in its own project and venv, and stops
+at the first failure:
+
+```
+.venv\Scripts\python.exe update_data.py                  # free prices (yfinance, FRED) + rebuild all
+.venv\Scripts\python.exe update_data.py --eodhd          # paid EODHD download first (subscription month)
+.venv\Scripts\python.exe update_data.py --no-download    # rebuild from the files on disk
+.venv\Scripts\python.exe update_data.py --dry-run        # print the steps only
+```
+
+Download -> `0_EODHD_download/data/3_output` -> copied to `1_FeaturesBuilder/input_data`
+-> `features build` -> the app cache below. Restart the app afterwards.
+
 What this project builds on top of the package is page-specific:
 
 * **The start-up cache** (`screenerapp/cache.py` -> `data/cache/`, ~5 s). `app.py`
@@ -73,15 +88,18 @@ screenerapp/
   theme.py                  chart palette and Plotly styling
   components.py             nav bar + the shared filter panel
   feature_docs.py           the feature documentation table, from the package registry
+  group_index.py            buy-and-hold sector/industry indexes (market page)
   pages/
     home.py                     landing page
     screener.py                 the table
     relative_performance.py     the rebased line chart
+    market.py                   sector and industry indexes, with their member tables
     heatmap.py                  sector treemap of price change
     indicator_distribution.py   market histograms / density map
     inspection.py               indicators through time, two y-axes
     dcf.py                      cash-flow valuation, forward and reverse
     features_docs.py            documentation of every feature (feature_docs.py builds it)
+    configuration.py            the portfolio, saved in the browser; the Portfolio button reads it
 assets/style.css            app styling
 data/cache/                 the start-up cache (gitignored)
 ```
@@ -97,6 +115,9 @@ Which one a page needs decides how it should ask:
   `data.get_cross_section(date, columns)`, or `data.get_price_change(start, end)` for a
   two-date change. A fundamental column is the quarter in force that day, by the
   package's point-in-time rule.
+* **A group's tickers, all dates, wide** (market) - `data.get_price_panel(tickers)`:
+  USD total-return close and market cap, date x ticker, carried forward inside each
+  ticker's life. Cached per group.
 
 `data.snap_to_trading_date(d)` moves a weekend or holiday back to the previous US
 session - the date pickers allow any calendar day.

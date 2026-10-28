@@ -12,10 +12,12 @@ from .. import components, data
 BLURBS = {
     "/screener": "Rank the current universe on any combination of indicators.",
     "/relative-performance": "Compare price moves from a common starting point, in percent.",
-    "/heatmap": "Price change by sector, sized by market capitalisation.",
+    "/market": "Sector and industry indexes, market cap or equally weighted, bought and held.",
+    "/heatmap":"Price change by sector, sized by market capitalisation.",
     "/indicator-distribution": "See where a stock falls within the market's spread of an indicator.",
     "/inspection": "Track two indicators through time for the stocks you pick.",
     "/dcf": "Value a stock on its cash flow, and reverse-engineer what the price assumes.",
+    "/configuration": "Build your portfolio, then select it on other pages with one click.",
     "/features": "What every feature means, how it is computed and where the app uses it.",
 }
 

@@ -138,33 +138,89 @@ def _quarterly(columns, tickers=None) -> pd.DataFrame:
     return indicators.apply_quarterly_rules(frame, columns)[["ticker", "date", *columns]]
 
 
+def _point_in_time(frame: pd.DataFrame) -> pd.DataFrame:
+    """Quarterly rows re-dated to the day each one came into force.
+
+    `available_date` is the first day the quarter's numbers were public - the same
+    key the package's point-in-time join uses for the cross-sections. The raw
+    `filing_date` is not used: EODHD fills it with placeholders (on or before the
+    period end for about a fifth of quarters), which would leak numbers early.
+
+    A quarter released late, after a newer one was already public, never comes
+    into force; of quarters released on the same day only the newest does. So
+    `date` becomes the release day and `period_end` keeps the quarter it reports.
+    """
+    frame = frame.sort_values(["ticker", "available_date", "date"])
+    newest_before = frame.groupby("ticker")["date"].cummax().groupby(frame["ticker"]).shift()
+    frame = frame[newest_before.isna() | (frame["date"] > newest_before)]
+    frame = frame.drop_duplicates(["ticker", "available_date"], keep="last")
+    return frame.rename(columns={"date": "period_end", "available_date": "date"}).reset_index(drop=True)
+
+
 @functools.lru_cache(maxsize=1024)
-def _read_ticker_history(source: str, ticker: str, columns: tuple[str, ...]) -> pd.DataFrame:
+def _read_ticker_history(
+    source: str, ticker: str, columns: tuple[str, ...], point_in_time: bool = False
+) -> pd.DataFrame:
     if source == indicators.SOURCE_PRICE:
         return screener.load(list(columns), tickers=[ticker])
+    keys = ["ticker", "date", "period_end"] if point_in_time else ["ticker", "date"]
     stocks = get_stocks()
     if not stocks.loc[stocks["ticker"] == ticker, "has_fundamentals"].any():
-        return pd.DataFrame(columns=["ticker", "date", *columns])
-    return _quarterly(columns, tickers=[ticker])
+        return pd.DataFrame(columns=[*keys, *columns])
+    if not point_in_time:
+        return _quarterly(columns, tickers=[ticker])
+    frame = features.read_table(
+        "fundamentals_quarterly",
+        [*indicators.quarterly_inputs(columns), "available_date"],
+        tickers=[ticker],
+    )
+    frame = indicators.apply_quarterly_rules(frame, columns)
+    return _point_in_time(frame[["ticker", "date", "available_date", *columns]])[[*keys, *columns]]
 
 
 def get_history(
     tickers: list[str] | tuple[str, ...],
     columns: list[str] | tuple[str, ...],
     source: str = indicators.SOURCE_PRICE,
+    point_in_time: bool = False,
 ) -> pd.DataFrame:
     """Long-format history (ticker, date, <columns>) for the given tickers.
 
     `source` price gives one row per trading day, fundamental one per quarter.
-    Caching is per ticker rather than per selection, so adding one ticker to an
-    existing chart only costs one new read.
+    A quarter is dated by its period end, or with `point_in_time` by the day its
+    numbers became public, with its period end kept in `period_end` (see
+    _point_in_time). Caching is per ticker rather than per selection, so adding
+    one ticker to an existing chart only costs one new read.
     """
     if not tickers:
-        return pd.DataFrame(columns=["ticker", "date", *columns])
+        keys = ["ticker", "date", "period_end"] if point_in_time else ["ticker", "date"]
+        return pd.DataFrame(columns=[*keys, *columns])
 
     columns = tuple(columns)
-    frames = [_read_ticker_history(source, t, columns) for t in tickers]
+    frames = [_read_ticker_history(source, t, columns, point_in_time) for t in tickers]
     return pd.concat(frames, ignore_index=True)
+
+
+@functools.lru_cache(maxsize=64)
+def get_price_panel(tickers: tuple[str, ...]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Wide (date x ticker) total-return close and market cap, both in USD.
+
+    For the market page's group indexes, so tickers in different currencies add
+    up. Each ticker is carried forward over gaps inside its own life (first to
+    last priced day) and left blank outside it: a missed session is then not
+    mistaken for a delisting. A non-USD ticker's life starts with its first
+    exchange rate.
+
+    The dates run on through the US calendar, so a group whose last stock stopped
+    trading years ago still shows it leaving rather than being held to the end.
+    """
+    frame = features.read_table("price_daily", ["close", "MarketCap", "fx_per_usd"], tickers=list(tickers))
+    frame["close_usd"] = frame["close"] / frame["fx_per_usd"]
+    prices = frame.pivot(index="date", columns="ticker", values="close_usd")
+    prices = prices.reindex(prices.index.union(get_trading_dates()))
+    caps = frame.pivot(index="date", columns="ticker", values="MarketCap").reindex_like(prices)
+    life = prices.ffill().notna() & prices.bfill().notna()
+    return prices.ffill().where(life), caps.ffill().where(life)
 
 
 # --- cross sections --------------------------------------------------------
@@ -249,7 +305,7 @@ def get_cross_section(date, columns: list[str] | tuple[str, ...]) -> pd.DataFram
 
 @functools.lru_cache(maxsize=32)
 def get_price_extremes(start, end) -> pd.DataFrame:
-    """Highest, lowest and last close per ticker across a whole window.
+    """Highest, lowest and last close per ticker across a whole window, with dates.
 
     Different shape of question from `get_price_change`, which only needs the
     two end dates: this has to see every session in between, so it reads the
@@ -264,7 +320,14 @@ def get_price_extremes(start, end) -> pd.DataFrame:
         return pd.DataFrame()
 
     closes = frame.groupby("ticker")["close"]
-    extremes = pd.DataFrame({"high": closes.max(), "low": closes.min()}).reset_index()
+    extremes = pd.DataFrame(
+        {
+            "high": closes.max(),
+            "high_date": frame.loc[closes.idxmax(), "date"].to_numpy(),
+            "low": closes.min(),
+            "low_date": frame.loc[closes.idxmin(), "date"].to_numpy(),
+        }
+    ).reset_index()
 
     newest = frame.loc[frame.groupby("ticker")["date"].idxmax()]
     newest = newest[["ticker", "date", "close", "MarketCap"]].rename(

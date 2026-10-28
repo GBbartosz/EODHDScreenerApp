@@ -32,19 +32,19 @@ DEFAULT_BOUND_PCT = 5.0
 # same palette and use its whole range.
 MODES = {
     "price": {
-        "label": "Price Change",
+        "label": "Start-End",
         "colourbar": "Change %",
         "bound": 5.0,
         "one_sided": None,
     },
     "ath": {
-        "label": "ATH Change",
+        "label": "ATH",
         "colourbar": "From high %",
         "bound": 30.0,
         "one_sided": "down",
     },
     "bottom": {
-        "label": "Bottom Change",
+        "label": "Bottom",
         "colourbar": "From low %",
         "bound": 50.0,
         "one_sided": "up",
@@ -109,7 +109,9 @@ def _build_nodes(frame: pd.DataFrame, depth: str) -> pd.DataFrame:
         else:
             rows.extend(_leaf_rows(sector_rows, sector_id))
 
-    return pd.DataFrame(rows)
+    nodes = pd.DataFrame(rows)
+    nodes["prices"] = nodes["prices"].fillna("")
+    return nodes
 
 
 def _leaf_rows(rows: pd.DataFrame, parent: str) -> list[dict]:
@@ -120,9 +122,28 @@ def _leaf_rows(rows: pd.DataFrame, parent: str) -> list[dict]:
             "parent": parent,
             "value": float(row.MarketCap),
             "change": float(row.change_pct),
+            "prices": _price_lines(row),
         }
         for row in rows.itertuples()
     ]
+
+
+def _price_lines(row) -> str:
+    """Hover lines for one ticker: the window's high, end and low closes.
+
+    Parent tiles have no single price, so the lines travel as one pre-built
+    string that is simply empty for them.
+    """
+    currency = row.currency if isinstance(row.currency, str) else ""
+
+    def price(value, date) -> str:
+        return f"{value:,.2f} {currency}  ({pd.Timestamp(date).date()})"
+
+    return (
+        f"<br>ATH  {price(row.high, row.high_date)}"
+        f"<br>End  {price(row.end_price, row.end_date)}"
+        f"<br>Bottom  {price(row.low, row.low_date)}"
+    )
 
 
 def _default_dates() -> tuple[pd.Timestamp, pd.Timestamp]:
@@ -152,15 +173,15 @@ def layout():
                         [
                             html.Div(
                                 [
-                                    html.Label("Measure", className="field-label"),
-                                    dcc.Dropdown(
+                                    html.Label("Change from", className="field-label"),
+                                    dcc.RadioItems(
                                         id="hm-mode",
                                         options=[
                                             {"label": cfg["label"], "value": key}
                                             for key, cfg in MODES.items()
                                         ],
                                         value="price",
-                                        clearable=False,
+                                        className="checklist",
                                     ),
                                 ],
                                 className="field field--narrow",
@@ -188,9 +209,14 @@ def layout():
                                         id="hm-bound",
                                         type="number",
                                         value=DEFAULT_BOUND_PCT,
-                                        min=0.1,
+                                        # The browser counts steps from `min`: with
+                                        # min 0.1 a value of 5 is off-grid, so the
+                                        # input reports it invalid and blanks it.
+                                        min=0.5,
                                         step=0.5,
-                                        debounce=True,
+                                        # Seconds, so +/- clicks redraw once they stop
+                                        # rather than only on Enter or blur.
+                                        debounce=0.5,
                                         className="number-input",
                                     ),
                                 ],
@@ -248,18 +274,32 @@ def _bound_for_mode(mode):
 
 
 def _frame_for_mode(start, end, mode):
-    """One row per ticker with `change_pct` meaning whatever the mode measures."""
+    """One row per ticker with `change_pct` meaning whatever the mode measures.
+
+    Every mode also carries the window's high, low and end close (with dates)
+    for the hover, so the percentage can be checked against the prices behind it.
+    """
+    extremes = data.get_price_extremes(start, end)
+    if extremes.empty:
+        return extremes
+
     if mode == "price":
-        return data.get_price_change(start, end)
+        # Start-End keeps its own rule - priced on both end dates - and only
+        # borrows the high and low from the window.
+        frame = data.get_price_change(start, end).rename(columns={"close_end": "end_price"})
+        frame["end_date"] = end
+        frame = frame.merge(
+            extremes[["ticker", "high", "high_date", "low", "low_date"]], on="ticker"
+        )
+    else:
+        reference = "high" if mode == "ath" else "low"
+        frame = extremes[extremes[reference] > 0].rename(
+            columns={"last": "end_price", "last_date": "end_date"}
+        )
+        frame["change_pct"] = (frame["end_price"] / frame[reference] - 1) * 100
 
-    frame = data.get_price_extremes(start, end)
-    if frame.empty:
-        return frame
-
-    reference = "high" if mode == "ath" else "low"
-    frame = frame[frame[reference] > 0].copy()
-    frame["change_pct"] = (frame["last"] / frame[reference] - 1) * 100
-    return frame
+    currency = data.get_stocks()[["ticker", "currency"]]
+    return frame.merge(currency, on="ticker", how="left")
 
 
 @callback(
@@ -313,6 +353,7 @@ def _update_heatmap(start_date, end_date, bound, depth, mode):
                 [
                     [f"{value:+.2f}%" for value in nodes["change"]],
                     [f"{value:,.0f} M" for value in nodes["value"]],
+                    nodes["prices"],
                 ]
             ),
             branchvalues="total",
@@ -341,6 +382,7 @@ def _update_heatmap(start_date, end_date, bound, depth, mode):
                 "<b>%{label}</b><br>"
                 "Market cap  %{customdata[1]}<br>"
                 "Change  %{customdata[0]}"
+                "%{customdata[2]}"
                 "<extra></extra>"
             ),
             tiling=dict(pad=2),

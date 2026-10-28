@@ -92,7 +92,7 @@ def layout():
                         "different price levels stay comparable.",
                         className="page-subtitle",
                     ),
-                    components.filter_panel(PAGE),
+                    components.filter_panel(PAGE, portfolio_button=True),
                     html.Div(
                         [
                             html.Div(
@@ -292,10 +292,11 @@ def _update_chart(start_date, end_date, tickers, scale, sectors, industries):
             trace_type(
                 x=series["date"],
                 y=ratio if scale == "log" else percent,
-                # Column vector, not a flat array: the ":+.1f" format spec is
-                # only honoured with explicit indexing (customdata[0]), and a
-                # 1-D customdata silently renders at full precision instead.
-                customdata=percent.to_numpy()[:, None],
+                # Formatted here, not by a ":+.1f" spec in the template: plotly 6
+                # sends numeric customdata as a binary array, and the WebGL
+                # trace used for big selections ignores the format spec on it
+                # and shows full precision. Text is shown exactly as given.
+                customdata=percent.map("{:+.1f}%".format).to_numpy(),
                 name=ticker,
                 mode="lines",
                 line=dict(
@@ -304,7 +305,7 @@ def _update_chart(start_date, end_date, tickers, scale, sectors, industries):
                 ),
                 opacity=theme.CONTEXT_OPACITY if is_context else theme.SERIES_OPACITY,
                 showlegend=not is_context,
-                hovertemplate=f"<b>{ticker}</b>  %{{customdata[0]:+.1f}}%<extra></extra>",
+                hovertemplate=f"<b>{ticker}</b>  %{{customdata}}<extra></extra>",
             )
         )
         plotted += 1
